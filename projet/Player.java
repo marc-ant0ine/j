@@ -5,6 +5,8 @@
  * Le score ne peut pas devenir négatif.
  */
 public class Player {
+    public static final int INITIAL_LIVES = 5; 
+    private int lives;
     private final String name;
     private int score;
     private static int playerCount = 0;
@@ -25,6 +27,7 @@ public class Player {
             this.name = name;
         }
         this.score = score;
+        this.lives = INITIAL_LIVES;
     }
     
     /**
@@ -65,6 +68,31 @@ public class Player {
             return;
         }
         this.score -= points;
+    }
+
+     public void removeLives(int amount) {
+        if (amount <= 0) return;
+        this.lives = (amount > this.lives) ? 0 : this.lives - amount;
+    }
+ 
+    /**
+     * Remet les vies à INITIAL_LIVES.
+     * Appelé par GameController lors d'un redémarrage de partie.
+     */
+    public void resetLives() {
+        this.lives = INITIAL_LIVES;
+    }
+ 
+    /**
+     * @return true si le joueur a encore au moins une vie.
+     */
+    public boolean isAlive() {
+        return this.lives > 0;
+    }
+ 
+    /** @return Le nombre de vies restantes. */
+    public int getLives() {
+        return this.lives;
     }
     
     @Override

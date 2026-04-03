@@ -1,87 +1,157 @@
 /**
- * Represents a game level modeled as a 2D grid of characters.
- * A cell contains either '#' (wall) or ' ' (empty space).
- * A level can hold one Player, placed at a specific position in the grid.
- * The player is represented by the character '1' on the displayed grid.
+ * Représente un niveau de jeu sous forme de grille de {@link Cell}.
+ *
+ * Monde 3, Niveau 4 — la grille interne {@code char[][]} est remplacée
+ * par une grille {@link Cell}{@code [][]}.  Chaque cellule connaît sa
+ * position, son type ({@link Cell.CellType}) et la présence éventuelle
+ * d'une pièce.
+ *
+ * Toutes les fonctionnalités précédentes sont conservées :
+ * <ul>
+ *   <li>Monde 3 Niv.1 : pièces '.' (+{@value #COIN_POINTS} pts, disparaissent),
+ *       "NIVEAU TERMINÉ".</li>
+ *   <li>Monde 3 Niv.2 : pièges '*' (-{ @value #TRAP_LIVES} vies, détruits),
+ *       5 vies, respawn, "GAME OVER".</li>
+ * </ul>
+ *
+ * L'interface publique est <b>inchangée</b> : {@link #getCell(int, int)} et
+ * {@link #setCell(int, int, char)} travaillent toujours avec des {@code char}
+ * pour la compatibilité avec {@code LevelLoader}, {@code Main}, etc.
  */
 public class Level {
 
-    /** Character used to represent a wall. */
+    // ------------------------------------------------------------------ //
+    //  Constantes de caractères (conservées pour compatibilité)           //
+    // ------------------------------------------------------------------ //
+
+    /** Caractère représentant un mur. */
     public static final char WALL   = '#';
 
-    /** Character used to represent empty space. */
+    /** Caractère représentant une case vide. */
     public static final char EMPTY  = ' ';
 
-    /** Character used to represent the player on the grid. */
+    /** Caractère représentant le joueur affiché sur la grille. */
     public static final char PLAYER = '1';
 
-    /** The 2D grid of characters that makes up this level. */
-    private char[][] grid;
+    /** Caractère représentant une pièce. */
+    public static final char COIN   = '.';
 
-    /** Number of rows in the grid. */
-    private int rows;
+    /** Caractère représentant un piège. */
+    public static final char TRAP   = '*';
 
-    /** Number of columns in the grid. */
-    private int cols;
+    /** Caractère représentant une porte verrouillée (Monde 3, Niv.5). */
+    public static final char DOOR   = 'D';
 
-    /** The player placed in this level (composition). */
-    private Player player;
+    /** Points gagnés par pièce ramassée. */
+    public static final int  COIN_POINTS = 10;
 
-    /** Row position of the player in the grid (-1 if no player). */
-    private int playerRow;
+    /** Vies perdues quand le joueur marche sur un piège. */
+    public static final int  TRAP_LIVES  = 2;
 
-    /** Column position of the player in the grid (-1 if no player). */
-    private int playerCol;
-
-    /** Total number of Level instances created. */
-    private static int levelCount = 0;
-
-
+    // ------------------------------------------------------------------ //
+    //  Attributs                                                           //
+    // ------------------------------------------------------------------ //
 
     /**
-     * Creates a Level from an existing 2D char array, with no player.
+     * Grille de cellules — remplace le {@code char[][]}.
+     * {@code cells[r][c]} est la cellule à la ligne r, colonne c.
+     */
+    private Cell[][] cells;    // ← NOUVEAU (remplace char[][] grid)
+
+    /** Nombre de lignes. */
+    private int rows;
+
+    /** Nombre de colonnes. */
+    private int cols;
+
+    /** Le joueur placé dans ce niveau. */
+    private Player player;
+
+    /** Ligne courante du joueur (-1 si absent). */
+    private int playerRow;
+
+    /** Colonne courante du joueur (-1 si absent). */
+    private int playerCol;
+
+    /** Ligne de départ du joueur — utilisée pour le respawn après un piège. */
+    private int startRow;
+
+    /** Colonne de départ du joueur — utilisée pour le respawn après un piège. */
+    private int startCol;
+
+    /** Nombre de pièces encore présentes dans le niveau. */
+    private int remainingCoins;
+
+    /** {@code true} quand le joueur n'a plus de vies (GAME OVER). */
+    private boolean gameOver;
+
+    /** Nombre total d'instances de Level créées. */
+    private static int levelCount = 0;
+
+    // ------------------------------------------------------------------ //
+    //  Constructeurs                                                       //
+    // ------------------------------------------------------------------ //
+
+    /**
+     * Crée un niveau à partir d'un tableau de caractères existant.
+     * Chaque caractère est converti en {@link Cell}.
      *
-     * @param grid A 2D array of characters ('#' or ' ').
+     * @param grid Tableau 2D de caractères ('#', ' ', '.', '*').
      */
     public Level(char[][] grid) {
         levelCount++;
-        this.grid      = grid;
-        this.rows      = grid.length;
-        this.cols      = (rows > 0) ? grid[0].length : 0;
-        this.player    = null;
-        this.playerRow = -1;
-        this.playerCol = -1;
-    }
-
-    /**
-     * Creates an empty Level of the given size (all cells are ' '), with no player.
-     *
-     * @param rows Number of rows.
-     * @param cols Number of columns.
-     */
-    public Level(int rows, int cols) {
-        levelCount++;
-        this.rows = rows;
-        this.cols = cols;
-        this.grid = new char[rows][cols];
+        this.rows = grid.length;
+        this.cols = (rows > 0) ? grid[0].length : 0;
+        this.cells = new Cell[rows][cols];
 
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                grid[r][c] = EMPTY;
+                cells[r][c] = charToCell(r, c, grid[r][c]);
             }
         }
 
         this.player    = null;
         this.playerRow = -1;
         this.playerCol = -1;
+        this.startRow  = -1;
+        this.startCol  = -1;
+        this.gameOver  = false;
+        this.remainingCoins = countCoinsInGrid();
     }
 
     /**
-     * Creates a Level of the given size with an optional border of walls, with no player.
+     * Crée un niveau vide (toutes les cellules sont EMPTY).
      *
-     * @param rows       Number of rows.
-     * @param cols       Number of columns.
-     * @param withBorder If {@code true}, the border cells are set to '#'.
+     * @param rows Nombre de lignes.
+     * @param cols Nombre de colonnes.
+     */
+    public Level(int rows, int cols) {
+        levelCount++;
+        this.rows = rows;
+        this.cols = cols;
+        this.cells = new Cell[rows][cols];
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                cells[r][c] = new Cell(r, c, Cell.CellType.EMPTY);
+            }
+        }
+
+        this.player         = null;
+        this.playerRow      = -1;
+        this.playerCol      = -1;
+        this.startRow       = -1;
+        this.startCol       = -1;
+        this.remainingCoins = 0;
+        this.gameOver       = false;
+    }
+
+    /**
+     * Crée un niveau avec une bordure optionnelle de murs.
+     *
+     * @param rows       Nombre de lignes.
+     * @param cols       Nombre de colonnes.
+     * @param withBorder Si {@code true}, les cases du bord sont des murs.
      */
     public Level(int rows, int cols, boolean withBorder) {
         this(rows, cols);
@@ -89,25 +159,111 @@ public class Level {
         if (withBorder) {
             for (int r = 0; r < rows; r++) {
                 for (int c = 0; c < cols; c++) {
-                    boolean isBorder = (r == 0 || r == rows - 1
-                                     || c == 0 || c == cols - 1);
-                    if (isBorder) {
-                        grid[r][c] = WALL;
+                    if (r == 0 || r == rows - 1 || c == 0 || c == cols - 1) {
+                        cells[r][c].setType(Cell.CellType.WALL);
                     }
                 }
             }
         }
     }
 
+    // ------------------------------------------------------------------ //
+    //  Helpers privés                                                      //
+    // ------------------------------------------------------------------ //
+
     /**
-     * Places a player in the level at the given position.
+     * Convertit un caractère en objet {@link Cell}.
      *
-     * @param player The player to place.
-     * @param row    Target row.
-     * @param col    Target column.
-     * @throws IllegalArgumentException       if the player is null.
-     * @throws ArrayIndexOutOfBoundsException if the position is outside the grid.
-     * @throws IllegalStateException          if the target cell is a wall.
+     * @param r  Ligne.
+     * @param c  Colonne.
+     * @param ch Caractère source ('#', ' ', '.', '*').
+     * @return   La cellule correspondante.
+     */
+    private Cell charToCell(int r, int c, char ch) {
+        switch (ch) {
+            case WALL: return new Cell(r, c, Cell.CellType.WALL);
+            case TRAP: return new Cell(r, c, Cell.CellType.TRAP);
+            case DOOR: return new Cell(r, c, Cell.CellType.LOCKED_DOOR);
+            case COIN: return new Cell(r, c, Cell.CellType.EMPTY, true); // vide + pièce
+            default:   return new Cell(r, c, Cell.CellType.EMPTY);
+        }
+    }
+
+    /** Compte les pièces présentes dans la grille de cellules. */
+    private int countCoinsInGrid() {
+        int count = 0;
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                if (cells[r][c].hasCoin()) count++;
+        return count;
+    }
+
+    /**
+     * Collecte la pièce présente sur la cellule :
+     * ajoute les points, décrémente le compteur, affiche un message,
+     * et affiche "NIVEAU TERMINÉ" quand la dernière pièce est prise.
+     *
+     * @param p Le joueur qui collecte.
+     */
+    private void collectCoin(Player p) {
+        p.addPoints(COIN_POINTS);
+        remainingCoins--;
+        System.out.println("Pièce ramassée ! +" + COIN_POINTS
+                + " pts  (score : " + p.getscore() + " pts"
+                + "  |  pièces restantes : " + remainingCoins + ")");
+        if (remainingCoins == 0) {
+            System.out.println("*** NIVEAU TERMINÉ ***");
+        }
+    }
+
+    /**
+     * Déclenche le piège à la position (trapRow, trapCol) :
+     * <ol>
+     *   <li>Détruit le piège (type → EMPTY).</li>
+     *   <li>Retire {@value #TRAP_LIVES} vies au joueur.</li>
+     *   <li>Si encore en vie → respawn à la position de départ.</li>
+     *   <li>Sinon → GAME OVER.</li>
+     * </ol>
+     */
+    private void triggerTrap(int trapRow, int trapCol) {
+        // 1. Détruire le piège
+        cells[trapRow][trapCol].setType(Cell.CellType.EMPTY);
+
+        // 2. Retirer des vies
+        player.removeLives(TRAP_LIVES);
+        System.out.println("!!! PIÈGE en (" + trapRow + ", " + trapCol + ") !"
+                + "  -" + TRAP_LIVES + " vies"
+                + "  (vies restantes : " + player.getLives() + ")");
+
+        // 3. Respawn ou game over
+        if (!player.isAlive()) {
+            playerRow = -1;
+            playerCol = -1;
+            gameOver  = true;
+            System.out.println("*** GAME OVER ***");
+        } else {
+            playerRow = startRow;
+            playerCol = startCol;
+            System.out.println("Retour à la position de départ ("
+                    + startRow + ", " + startCol + ").");
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    //  setPlayer                                                           //
+    // ------------------------------------------------------------------ //
+
+    /**
+     * Place le joueur dans le niveau à la position (row, col).
+     * Le premier appel enregistre cette position comme point de départ
+     * pour le respawn.
+     *
+     * @param player Le joueur à placer.
+     * @param row    Ligne cible.
+     * @param col    Colonne cible.
+     * @throws IllegalArgumentException       si le joueur est {@code null}.
+     * @throws ArrayIndexOutOfBoundsException si la position est hors grille.
+     * @throws IllegalStateException          si la cellule cible est un mur.
      */
     public void setPlayer(Player player, int row, int col) {
         if (player == null) {
@@ -119,90 +275,127 @@ public class Level {
                 "Position (" + row + ", " + col + ") hors des limites de la grille "
                 + rows + "x" + cols + ".");
         }
-        if (grid[row][col] == WALL) {
+        if (cells[row][col].getType() == Cell.CellType.WALL) {
             throw new IllegalStateException(
                 "Impossible de placer le joueur sur un mur en ("
                 + row + ", " + col + ").");
         }
 
-        // Erase previous player position if any
-        if (this.player != null) {
-            grid[playerRow][playerCol] = EMPTY;
+        // Enregistrer la position de départ au premier appel
+        if (this.startRow == -1) {
+            this.startRow = row;
+            this.startCol = col;
+        }
+
+        // Collecter la pièce si la cellule de départ en contient une
+        if (cells[row][col].hasCoin()) {
+            cells[row][col].setHasCoin(false);
+            collectCoin(player);
         }
 
         this.player    = player;
         this.playerRow = row;
         this.playerCol = col;
-        grid[row][col] = PLAYER;
+        this.gameOver  = false;
     }
 
-   
+    // ------------------------------------------------------------------ //
+    //  movePlayer                                                          //
+    // ------------------------------------------------------------------ //
 
     /**
-     * Moves the player one cell in the given direction.
-     * If the target cell is a wall or outside the grid, the player stays in place.
-     * The level is displayed after every call, even if the player did not move.
+     * Déplace le joueur d'une case dans la direction donnée.
      *
-     * @param direction The direction to move ({@link Direction}).
-     * @throws IllegalStateException if no player has been placed in this level.
+     * <p><b>Monde 3 Niv.6 — comportement torique :</b> la grille est
+     * considérée comme un tore.  Sortir par un bord fait réapparaître le
+     * joueur sur le bord opposé.  Il n'y a donc plus de blocage
+     * "hors de la grille" ; seuls les murs et les portes verrouillées
+     * (via {@link Cell#isWalkable()}) bloquent le déplacement.
+     *
+     * <ul>
+     *   <li>Mur / porte verrouillée → le joueur reste en place.</li>
+     *   <li>Pièce → collectée (+{@value #COIN_POINTS} pts, disparaît).</li>
+     *   <li>Piège → -{@value #TRAP_LIVES} vies, détruit, respawn
+     *       (ou GAME OVER si plus de vies).</li>
+     * </ul>
+     *
+     * Le niveau est toujours affiché après l'appel.
+     *
+     * @param direction Direction du déplacement.
+     * @throws IllegalStateException si aucun joueur n'est placé.
      */
     public void movePlayer(Direction direction) {
         if (player == null) {
-            throw new IllegalStateException(
-                "Aucun joueur n'est place dans ce niveau.");
+            throw new IllegalStateException("Aucun joueur n'est place dans ce niveau.");
+        }
+        if (gameOver) {
+            System.out.println("La partie est terminée (GAME OVER).");
+            return;
         }
 
-        // Compute target position using switch/case on the enum
+        // Calculer la position cible AVANT application du tore
         int targetRow = playerRow;
         int targetCol = playerCol;
 
         switch (direction) {
-            case UP:
-                targetRow = playerRow - 1;
-                break;
-            case DOWN:
-                targetRow = playerRow + 1;
-                break;
-            case LEFT:
-                targetCol = playerCol - 1;
-                break;
-            case RIGHT:
-                targetCol = playerCol + 1;
-                break;
+            case UP:    targetRow = playerRow - 1; break;
+            case DOWN:  targetRow = playerRow + 1; break;
+            case LEFT:  targetCol = playerCol - 1; break;
+            case RIGHT: targetCol = playerCol + 1; break;
         }
 
-        // Check bounds
-        boolean outOfBounds = (targetRow < 0 || targetRow >= rows
-                            || targetCol < 0 || targetCol >= cols);
+        // ---- Monde 3 Niv.6 : comportement torique ----
+        // Le modulo Java peut retourner un résultat négatif (ex. -1 % 7 = -1).
+        // On ajoute rows/cols avant le modulo pour garantir un résultat positif.
+        targetRow = ((targetRow % rows) + rows) % rows;
+        targetCol = ((targetCol % cols) + cols) % cols;
 
-        if (outOfBounds) {
-            System.out.println("Deplacement " + direction + " bloque : hors de la grille.");
-        } else if (grid[targetRow][targetCol] == WALL) {
+        // Vérifier si la cellule cible est franchissable (mur ou porte)
+        if (!cells[targetRow][targetCol].isWalkable()) {
             System.out.println("Deplacement " + direction + " bloque : mur en ("
-                + targetRow + ", " + targetCol + ").");
+                    + targetRow + ", " + targetCol + ").");
+
         } else {
-            // Move the player
-            grid[playerRow][playerCol] = EMPTY;
+            // Lire le contenu AVANT de déplacer le joueur
+            Cell target     = cells[targetRow][targetCol];
+            boolean hasCoin = target.hasCoin();
+            boolean isTrap  = (target.getType() == Cell.CellType.TRAP);
+
+            // Déplacer le joueur
             playerRow = targetRow;
             playerCol = targetCol;
-            grid[playerRow][playerCol] = PLAYER;
             System.out.println("Deplacement " + direction
-                + " -> joueur en (" + playerRow + ", " + playerCol + ").");
+                    + " -> joueur en (" + playerRow + ", " + playerCol + ").");
+
+            // Réagir au contenu de la cellule
+            if (hasCoin) {
+                target.setHasCoin(false);   // la pièce disparaît
+                collectCoin(player);
+            } else if (isTrap) {
+                triggerTrap(targetRow, targetCol);
+            }
         }
 
-        // Always display the level after the move attempt
+        // Toujours afficher le niveau après la tentative de déplacement
         display();
     }
 
+    // ------------------------------------------------------------------ //
+    //  display                                                             //
+    // ------------------------------------------------------------------ //
 
     /**
-     * Prints the level grid to the standard output.
-     * Each row is printed on its own line.
+     * Affiche la grille sur la sortie standard.
+     * Le token joueur ('1') est superposé à sa position courante.
      */
     public void display() {
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                System.out.print(grid[r][c]);
+                if (r == playerRow && c == playerCol) {
+                    System.out.print(PLAYER);
+                } else {
+                    System.out.print(cells[r][c].toChar());
+                }
             }
             System.out.println();
         }
@@ -210,78 +403,125 @@ public class Level {
     }
 
     // ------------------------------------------------------------------ //
-    //  Accessors                                                           //
+    //  Accesseurs — interface publique inchangée                          //
     // ------------------------------------------------------------------ //
 
-    /** @return The row count. */
+    /** @return Le nombre de lignes. */
     public int getRows() { return rows; }
 
-    /** @return The column count. */
+    /** @return Le nombre de colonnes. */
     public int getCols() { return cols; }
 
     /**
-     * Returns the character at position (row, col).
-     * @param row Row index.
-     * @param col Column index.
-     * @return The character at the given position.
+     * Retourne le caractère représentant la cellule (row, col).
+     * Compatible avec l'interface char-based des versions précédentes.
+     *
+     * @param row Ligne.
+     * @param col Colonne.
+     * @return Caractère d'affichage.
      */
-    public char getCell(int row, int col) { return grid[row][col]; }
+    public char getCell(int row, int col) {
+        if (row == playerRow && col == playerCol) return PLAYER;
+        return cells[row][col].toChar();
+    }
 
     /**
-     * Sets the character at position (row, col).
-     * @param row  Row index.
-     * @param col  Column index.
-     * @param cell The character to place.
+     * Modifie la cellule (row, col) à partir d'un caractère.
+     * Compatible avec l'interface char-based des versions précédentes.
+     * Met à jour le compteur de pièces si nécessaire.
+     *
+     * @param row  Ligne.
+     * @param col  Colonne.
+     * @param ch   Nouveau caractère ('#', ' ', '.', '*').
      */
-    public void setCell(int row, int col, char cell) { grid[row][col] = cell; }
+    public void setCell(int row, int col, char ch) {
+        boolean hadCoin  = cells[row][col].hasCoin();
+        boolean willHave = (ch == COIN);
+        if (hadCoin && !willHave) remainingCoins--;
+        else if (!hadCoin && willHave) remainingCoins++;
+        cells[row][col] = charToCell(row, col, ch);
+    }
 
-    /** @return The player placed in this level, or {@code null} if none. */
+    /**
+     * Retourne directement l'objet {@link Cell} à la position (row, col).
+     * Méthode supplémentaire offerte par Monde 3 Niv.4 pour accéder au
+     * modèle objet.
+     *
+     * @param row Ligne.
+     * @param col Colonne.
+     * @return La cellule à cette position.
+     */
+    public Cell getCellObject(int row, int col) { return cells[row][col]; }
+
+    /** @return Le joueur placé dans ce niveau, ou {@code null}. */
     public Player getPlayer() { return player; }
 
-    /** @return The player's row index, or -1 if no player is placed. */
+    /** @return La ligne courante du joueur, ou -1 si absent. */
     public int getPlayerRow() { return playerRow; }
 
-    /** @return The player's column index, or -1 if no player is placed. */
+    /** @return La colonne courante du joueur, ou -1 si absent. */
     public int getPlayerCol() { return playerCol; }
 
-    /** @return The total number of Level instances created. */
+    /** @return La ligne de départ du joueur (pour le respawn). */
+    public int getStartRow() { return startRow; }
+
+    /** @return La colonne de départ du joueur (pour le respawn). */
+    public int getStartCol() { return startCol; }
+
+    /** @return Le nombre de pièces restantes dans le niveau. */
+    public int getRemainingCoins() { return remainingCoins; }
+
+    /** @return {@code true} si toutes les pièces ont été ramassées. */
+    public boolean isCompleted() { return remainingCoins == 0; }
+
+    /** @return {@code true} si le joueur n'a plus de vies (GAME OVER). */
+    public boolean isGameOver() { return gameOver; }
+
+    /** @return Le nombre total d'instances de Level créées. */
     public static int getLevelCount() { return levelCount; }
 
+    // ------------------------------------------------------------------ //
+    //  equals / toString                                                   //
+    // ------------------------------------------------------------------ //
+
     /**
-     * Two levels are equal if they have the same dimensions and identical cell content.
-     * @param obj The object to compare with.
-     * @return {@code true} if equal, {@code false} otherwise.
+     * Deux niveaux sont égaux s'ils ont les mêmes dimensions et le même
+     * contenu (comparaison via {@link Cell#toChar()}).
      */
     @Override
     public boolean equals(Object obj) {
         if (obj == null || !(obj instanceof Level)) return false;
         Level other = (Level) obj;
         if (this.rows != other.rows || this.cols != other.cols) return false;
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                if (this.grid[r][c] != other.grid[r][c]) return false;
-            }
-        }
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                if (this.cells[r][c].toChar() != other.cells[r][c].toChar()) return false;
         return true;
     }
 
     /**
-     * Returns a string representation of the level including player info.
-     *
-     * @return A multi-line string of the grid, followed by player info if present.
+     * Retourne une représentation textuelle du niveau avec les informations
+     * du joueur si présent.
      */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                sb.append(grid[r][c]);
+                if (r == playerRow && c == playerCol) {
+                    sb.append(PLAYER);
+                } else {
+                    sb.append(cells[r][c].toChar());
+                }
             }
             sb.append('\n');
         }
         if (player != null) {
-            sb.append("Joueur : ").append(player.getname())
-              .append(" en (").append(playerRow).append(", ").append(playerCol).append(')');
+            sb.append("Joueur : ").append(player.getName())
+              .append(" en (").append(playerRow).append(", ").append(playerCol).append(')')
+              .append("  |  Score : ").append(player.getscore()).append(" pts")
+              .append("  |  Vies : ").append(player.getLives())
+              .append("  |  Pièces restantes : ").append(remainingCoins);
         }
         return sb.toString();
     }
